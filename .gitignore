@@ -1,0 +1,11 @@
+# Only analysis_xy analysis scripts are tracked
+*
+
+# Whitelist
+!.gitignore
+!analysis_xy/
+!analysis_xy/*.py
+!stage0_ground/
+!stage0_ground/serve_fence_annotator.py
+!stage0_data/
+!stage0_data/stage0_run.py
