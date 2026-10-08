@@ -9,3 +9,11 @@
 !stage0_ground/serve_fence_annotator.py
 !stage0_data/
 !stage0_data/stage0_run.py
+!repro/
+!repro/*.py
+!repro/README.md
+!repro/data/
+!repro/data/*.csv
+!repro/data/recordings/
+!repro/data/recordings/*/
+!repro/data/recordings/*/*
