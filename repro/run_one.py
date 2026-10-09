@@ -167,12 +167,6 @@ def main():
     ap.add_argument("--win", nargs=2, type=int, metavar=("START", "END"),
                     default=None,
                     help="analysis time window in frames (default: full recording)")
-    ap.add_argument("--v2", action="store_true",
-                    help="keypoint QC V2: drop points with confidence "
-                         "< 0.6 (V1/default keeps the pipeline threshold 0.3)")
-    ap.add_argument("--min-conf", type=float, default=None, metavar="FLOAT",
-                    help="custom keypoint confidence threshold (overrides "
-                         "--v2; e.g. --min-conf 0.6)")
     args = ap.parse_args()
 
     file_mode = args.dog is not None or args.human is not None or args.fence is not None
@@ -247,17 +241,6 @@ def main():
 
     g["batch"], g["rec"] = meta["batch"], meta["rec"]
 
-    # ---- keypoint QC (V2 / custom threshold) ----
-    min_conf = args.min_conf if args.min_conf is not None else (0.6 if args.v2 else None)
-    if min_conf is not None:
-        n_before = int(g["valid"].sum())
-        g["valid"] = g["confidence"].to_numpy(float) >= min_conf
-        n_after = int(g["valid"].sum())
-        tag = "QC V2" if (args.v2 and args.min_conf is None) else "QC"
-        print(f"  {tag}: confidence >= {min_conf:g} -> valid keypoints "
-              f"{n_before} -> {n_after} "
-              f"({100*n_after/max(n_before,1):.1f}% kept)")
-
     out_dir = (os.path.abspath(args.out) if args.out
                else os.path.join(HERE, "results", "single", meta["dir"]))
     os.makedirs(out_dir, exist_ok=True)
@@ -276,8 +259,6 @@ def main():
     else:
         qc["dog_inside_fence_ratio"] = np.nan
     rec_row = R.summarize_recording(fm, qc, meta)
-    rec_row["qc_min_conf"] = (min_conf if min_conf is not None
-                              else "V1 (pipeline default)")
 
     fig_meta = {"rec": meta["rec"], "batch": meta["batch"], "breed": meta["breed"],
                 "scenario": meta["scenario"], "dog_id": meta["dog_id"]}
@@ -295,7 +276,7 @@ def main():
     print(f"  Frames = {rec_row['n_frames']} ({rec_row['duration_s']:.0f} s), "
           f"dog valid = {rec_row['dog_valid_ratio']:.0%}, "
           f"tail visible = {rec_row['tail_vis_ratio']:.0%}, "
-          f"scale = {scale_txt}, QC = {rec_row['qc_min_conf']}")
+          f"scale = {scale_txt}")
     m = rec_row
     for k, lab in [
         ("dog_mean_speed_mps", "Dog mean speed (m/s)"),
