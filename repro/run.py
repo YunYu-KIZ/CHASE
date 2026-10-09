@@ -370,6 +370,14 @@ def process_recording(g, twin=None, scale=np.nan):
     d_ht_d = np.hypot(xH - tx_q, yH - ty_q)
 
     # ---- Tail left-right wagging (XY plane) ----
+    # Depth-domain axis gate; when the depth columns are absent (raw 2D input
+    # such as a DLC export), approximate the metre-domain axis with XY pixels
+    # x scale so the axis gate and the reference lateral series stay usable.
+    # Recordings that carry depth data are unaffected.
+    if not (np.isfinite(xW).any() or np.isfinite(yW).any()):
+        s_ = scale if np.isfinite(scale) else np.nan
+        xB, yB, xW, yW, xT, yT = (pB * s_, qB * s_, pW * s_, qW * s_,
+                                  pT * s_, qT * s_)
     axp, ayp = pB - pW, qB - qW
     Lp = np.hypot(axp, ayp)
     axis_ok = Lp > 5.0

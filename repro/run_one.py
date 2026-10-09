@@ -56,14 +56,52 @@ import run as R  # noqa: E402  (reuses all metric/figure functions)
 COND_S = {"01": "S1", "02": "S2", "03": "S3"}
 
 
+def load_dlc_wide(path):
+    """DeepLabCut wide-format CSV (scorer/bodyparts/coords header rows) ->
+    repro long format. Coordinates are used as-is (720p colour pixels);
+    x_m/y_m/h_m have no DLC equivalent and become NaN; valid = likelihood>=0.3
+    (same QC threshold as the stage0 pipeline)."""
+    df = pd.read_csv(path, header=[1, 2], index_col=0)
+    out = []
+    for bp in dict.fromkeys(c[0] for c in df.columns):  # ordered unique
+        lk = df[(bp, "likelihood")].to_numpy(float)
+        out.append(pd.DataFrame({
+            "frame": df.index,
+            "body_part": bp,
+            "color_x": df[(bp, "x")].to_numpy(float),
+            "color_y": df[(bp, "y")].to_numpy(float),
+            "x_m": np.nan, "y_m": np.nan, "h_m": np.nan,
+            "confidence": lk,
+            "valid": lk >= 0.3,
+        }))
+    return pd.concat(out, ignore_index=True)
+
+
+def load_keypoint_csv(path):
+    """Load a keypoints CSV in either the repro long format or a raw
+    DeepLabCut wide-format export (auto-detected)."""
+    head = pd.read_csv(path, header=None, nrows=2)
+    first2 = head.iloc[0].tolist() + head.iloc[1].tolist()
+    if str(head.iloc[0, 0]).strip().lower() == "scorer" or "bodyparts" in first2:
+        return load_dlc_wide(path)
+    df = pd.read_csv(path)
+    if "body_part" not in df.columns:
+        raise SystemExit(
+            f"Unrecognised keypoints format: {path}\n"
+            f"Expected either the package long format "
+            f"(frame/body_part/color_x/color_y/...) or a raw DeepLabCut "
+            f"wide-format CSV (scorer/bodyparts/coords header rows).")
+    return df
+
+
 def load_from_files(dog_csv, human_csv=None):
     """dog + human CSV files -> single long table (same as run.load_recording)."""
-    dog = pd.read_csv(dog_csv)
+    dog = load_keypoint_csv(dog_csv)
     dog["subject"] = "dog"
     if human_csv:
         if not os.path.exists(human_csv):
             raise SystemExit(f"Human keypoints file not found: {human_csv}")
-        hum = pd.read_csv(human_csv)
+        hum = load_keypoint_csv(human_csv)
     else:
         hum = pd.DataFrame(columns=dog.columns)
     hum["subject"] = "human"

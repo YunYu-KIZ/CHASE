@@ -66,9 +66,9 @@ python3 run_one.py data/recordings/08__录制_08_201802_03
 
 | Argument | Required | Meaning |
 |---|---|---|
-| `--dog FILE` | file mode | dog keypoints CSV |
+| `--dog FILE` | file mode | dog keypoints CSV — package long format **or raw DeepLabCut wide-format export** (auto-detected) |
 | `--fence FILE` | no | fence corners CSV (exactly 6 corners). Optional: without it the scale cannot be calibrated and all metre-based metrics become NaN; pixel trajectories and figures are still produced |
-| `--human FILE` | no | human keypoints CSV; omitting it (or an empty file) = "no human present" |
+| `--human FILE` | no | human keypoints CSV (same two accepted formats); omitting it (or an empty file) = "no human present" |
 | `--rec NAME` | no | recording name for outputs/metadata; default = dog-CSV file stem, or its parent folder name for generic names like `dog_keypoints.csv` |
 | `data_folder` | folder mode | folder containing `dog_keypoints.csv` and `fence_corners.csv` (and optionally `human_keypoints.csv`) |
 | `--out DIR` | no | output folder; default `results/single/<name>/` (created if missing) |
@@ -82,6 +82,14 @@ Behaviour details:
   a fence file that is provided but does not contain exactly 6 corners is an
   error. `human_keypoints.csv` is optional: a missing or empty file
   is treated as "no human present" and all human-related metrics become NaN.
+- **Raw DeepLabCut CSVs** — `--dog`/`--human` also accept raw DLC
+  wide-format exports (scorer/bodyparts/coords header rows); bodypart names
+  must match the package ones (`occipital_protuberance, withers, tail_base,
+  tail_tip` for the dog; `left_shoulder, right_shoulder, left_toe_tip,
+  right_toe_tip` for the human). DLC data has no depth, so the depth-only
+  metrics (tail elevation, head pitch) are NaN, `valid` = likelihood ≥ 0.3,
+  and the metre-domain tail-axis gate is approximated with XY pixels × scale
+  (so wag amplitude/frequency work when a fence is given).
 - **Metadata inference** — recording name = folder name; scenario is inferred
   when the folder name ends in `_01/_02/_03` (S1/S2/S3); otherwise it is
   reported as unspecified. If the folder happens to be one of the package's
