@@ -237,12 +237,33 @@ def create_app():
             return _jresp({"error": "no points to save"})
         now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         if SINGLE_OUT is not None:
-            pd.DataFrame([{
-                "frame": frame, "corner_id": i,
-                "color_x_720": p["x720"], "color_y_720": p["y720"],
-                "video_x": p["video_x"], "video_y": p["video_y"],
-                "saved_at": now} for i, p in enumerate(pts, 1)]
-            ).to_csv(SINGLE_OUT, index=False)
+            # server-side conversion fallback: if the browser could not
+            # precompute the 720p coordinates, convert video clicks using the
+            # actual capture resolution read by OpenCV
+            cap_info = _cap(batch, rec)
+            vw, vh = (cap_info[2], cap_info[3]) if cap_info else (None, None)
+            def _fin(v):
+                try:
+                    return np.isfinite(float(v))
+                except (TypeError, ValueError):
+                    return False
+            rows = []
+            for i, p in enumerate(pts, 1):
+                x720, y720 = p.get("x720"), p.get("y720")
+                if not (_fin(x720) and _fin(y720)):
+                    if not vw or not vh:
+                        return _jresp({"error":
+                                       "720p conversion failed (no video "
+                                       "resolution); reload the page and "
+                                       "re-annotate"})
+                    x720 = float(p["video_x"]) * RGB_W / vw
+                    y720 = float(p["video_y"]) * RGB_H / vh
+                rows.append({
+                    "frame": frame, "corner_id": i,
+                    "color_x_720": x720, "color_y_720": y720,
+                    "video_x": p["video_x"], "video_y": p["video_y"],
+                    "saved_at": now})
+            pd.DataFrame(rows).to_csv(SINGLE_OUT, index=False)
             return _jresp({"saved": len(pts), "path": str(SINGLE_OUT)})
         corners = _load_corners()
         corners = corners[~((corners["batch"] == batch) & (corners["rec"] == rec))]
@@ -310,6 +331,16 @@ async function init(){
   const R = await jget('/api/recordings');
   S.recs = R.recs; S.rgb = R.rgb;
   fillRecSel('');
+  // auto-select and load the first recording (single-video mode has exactly
+  // one) so the canvas is sized to the video BEFORE any frame is shown or
+  // clicked — otherwise the canvas stays at the browser default 300x150 and
+  // click coordinates are recorded in the wrong pixel space
+  if(R.recs.length){
+    const r0 = R.recs[0];
+    const sel = document.getElementById('recSel');
+    sel.value = JSON.stringify([r0.batch, r0.rec]);
+    loadRec(r0.batch, r0.rec);
+  }
   const done = R.recs.filter(r=>r.done>0).length;
   document.getElementById('progress').textContent = `Annotated ${done}/${R.recs.length} recordings`;
   setInterval(async()=>{const R2=await jget('/api/recordings');
@@ -360,6 +391,12 @@ async function loadRec(b,r){
   await loadFrame();
 }
 async function loadFrame(){
+  if(S.batch===undefined){   // no recording loaded yet (canvas still 300x150)
+    const sel = document.getElementById('recSel');
+    if(sel.value){ const [b,r]=JSON.parse(sel.value); await loadRec(b,r); return; }
+    document.getElementById('status').textContent='Select a recording first';
+    return;
+  }
   S.frame = Math.max(0, Math.min(S.nFrames-1, +document.getElementById('frameInp').value||0));
   document.getElementById('frameInp').value = S.frame;
   const url = `/api/frame?batch=${encodeURIComponent(S.batch)}&rec=${encodeURIComponent(S.rec)}&frame=${S.frame}`;
