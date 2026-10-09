@@ -23,7 +23,15 @@ Output: stage0_ground/fence_corners.csv
   (the depth_* columns are legacy fields kept for schema compatibility and
    are written as empty values by this tool)
 
-Start: python3 stage0_ground/serve_fence_annotator.py [--port 8130]
+Start:
+  batch mode : python3 stage0_ground/serve_fence_annotator.py [--port 8130]
+  single file: python3 stage0_ground/serve_fence_annotator.py \
+                   --video /abs/path/camera_1_xxx.mp4 \
+                   [--out /abs/path/fence_corners.csv] [--port 8130]
+
+Single-file mode annotates one video given by absolute path and saves the six
+corners to a fence_corners.csv next to the video (or to --out), in the format
+accepted by repro/run_one.py --fence (corner_id, color_x_720, color_y_720, ...).
 """
 from __future__ import annotations
 
@@ -50,6 +58,10 @@ STAGE0_ALL = ROOT / "stage0_data" / "stage0_keypoints_xyz_all.csv"
 VIDEO_ROOT = Path("/home/yy/data/1-Circular-Fence-Test/depth/videos")
 CORNER_CSV = _HERE / "fence_corners.csv"
 
+# single-file mode (set by --video): the one video to annotate + output CSV
+SINGLE_VIDEO: Path | None = None
+SINGLE_OUT: Path | None = None
+
 RGB_W, RGB_H = S0CFG["rgb_w"], S0CFG["rgb_h"]  # 1280x720 keypoint convention
 
 CORNER_COLS = ["batch", "rec", "frame", "corner_id", "color_x_720",
@@ -61,6 +73,8 @@ CORNER_COLS = ["batch", "rec", "frame", "corner_id", "color_x_720",
 # Data access
 # ----------------------------------------------------------------------
 def _video_path(batch: str, rec: str) -> Path | None:
+    if SINGLE_VIDEO is not None:
+        return SINGLE_VIDEO
     base = VIDEO_ROOT / batch / rec
     if (base / "color").is_dir():
         mp4s = sorted((base / "color").glob("camera_1_*.mp4"))
@@ -70,8 +84,10 @@ def _video_path(batch: str, rec: str) -> Path | None:
 
 
 def _recordings():
-    """[(batch, rec)] from the video directory."""
+    """[(batch, rec)] from the video directory (single video in file mode)."""
     out = []
+    if SINGLE_VIDEO is not None:
+        return [(SINGLE_VIDEO.parent.name, SINGLE_VIDEO.stem)]
     if not VIDEO_ROOT.is_dir():
         return out
     for bdir in sorted(VIDEO_ROOT.iterdir()):
@@ -200,6 +216,11 @@ def create_app():
     def api_annotations():
         batch = request.args.get("batch", "")
         rec = request.args.get("rec", "")
+        if SINGLE_OUT is not None:
+            if SINGLE_OUT.exists():
+                df = pd.read_csv(SINGLE_OUT)
+                return _jresp({"rows": df.sort_values("corner_id").to_dict("records")})
+            return _jresp({"rows": []})
         corners = _load_corners()
         if not len(corners):
             return _jresp({"rows": []})
@@ -215,6 +236,14 @@ def create_app():
         if len(pts) == 0:
             return _jresp({"error": "no points to save"})
         now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        if SINGLE_OUT is not None:
+            pd.DataFrame([{
+                "frame": frame, "corner_id": i,
+                "color_x_720": p["x720"], "color_y_720": p["y720"],
+                "video_x": p["video_x"], "video_y": p["video_y"],
+                "saved_at": now} for i, p in enumerate(pts, 1)]
+            ).to_csv(SINGLE_OUT, index=False)
+            return _jresp({"saved": len(pts), "path": str(SINGLE_OUT)})
         corners = _load_corners()
         corners = corners[~((corners["batch"] == batch) & (corners["rec"] == rec))]
         for i, p in enumerate(pts, 1):
@@ -421,13 +450,31 @@ init();
 
 
 def main():
-    ap = argparse.ArgumentParser()
+    global SINGLE_VIDEO, SINGLE_OUT
+    ap = argparse.ArgumentParser(
+        description="Hexagonal fence corner annotation tool")
     ap.add_argument("--port", type=int, default=8130)
+    ap.add_argument("--video", default=None,
+                    help="single-file mode: absolute path of the video to "
+                         "annotate (bypasses the batch/video-root layout)")
+    ap.add_argument("--out", default=None,
+                    help="single-file mode: output fence_corners.csv "
+                         "(default: fence_corners.csv next to the video; "
+                         "format accepted by repro/run_one.py --fence)")
     args = ap.parse_args()
-    threading.Thread(target=_warm_dog_cache, daemon=True).start()
+    if args.video:
+        SINGLE_VIDEO = Path(args.video).expanduser().resolve()
+        if not SINGLE_VIDEO.is_file():
+            raise SystemExit(f"Video not found: {SINGLE_VIDEO}")
+        SINGLE_OUT = (Path(args.out).expanduser().resolve() if args.out
+                      else SINGLE_VIDEO.parent / "fence_corners.csv")
+        print(f"[fence annotator] http://127.0.0.1:{args.port}  "
+              f"(single video: {SINGLE_VIDEO} | output: {SINGLE_OUT})")
+    else:
+        threading.Thread(target=_warm_dog_cache, daemon=True).start()
+        print(f"[fence annotator] http://127.0.0.1:{args.port}  "
+              f"(videos: {VIDEO_ROOT} | output: {CORNER_CSV})")
     app = create_app()
-    print(f"[fence annotator] http://127.0.0.1:{args.port}  "
-          f"(videos: {VIDEO_ROOT} | output: {CORNER_CSV})")
     app.run(host="0.0.0.0", port=args.port, threaded=True)
 
 
