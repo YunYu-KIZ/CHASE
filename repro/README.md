@@ -73,6 +73,8 @@ python3 run_one.py data/recordings/08__录制_08_201802_03
 | `data_folder` | folder mode | folder containing `dog_keypoints.csv` and `fence_corners.csv` (and optionally `human_keypoints.csv`) |
 | `--out DIR` | no | output folder; default `results/single/<name>/` (created if missing) |
 | `--win START END` | no | analysis time window in **frame numbers**, inclusive |
+| `--v2` | no | keypoint QC V2: drop points with confidence < 0.6 (default V1 keeps the pipeline threshold 0.3; the applied threshold is recorded in `qc_min_conf` in metrics_rec.csv) |
+| `--min-conf FLOAT` | no | custom confidence threshold (overrides `--v2`) |
 
 Behaviour details:
 
