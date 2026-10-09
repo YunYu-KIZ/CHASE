@@ -49,19 +49,29 @@ Typical run time: ~1 min for all 117 recordings (4 workers).
 
 ## Usage — `run_one.py` (one experiment, standalone)
 
-```bash
-# any experiment folder (absolute path) -> any output folder (absolute path)
-python3 run_one.py /path/to/experiment_folder --out /path/to/output_folder
-python3 run_one.py /path/to/experiment_folder --win 120 1704   # manual time window (frames)
+File mode — give the keypoint CSVs directly (any absolute paths):
 
-# a package recording also works directly
+```bash
+python3 run_one.py --dog /path/dog.csv --fence /path/fence.csv \
+    --human /path/human.csv --out /path/output_folder
+python3 run_one.py --dog /path/dog.csv --fence /path/fence.csv --out OUT  # no human
+```
+
+Folder mode — a folder holding the package layout:
+
+```bash
+python3 run_one.py /path/to/experiment_folder --out /path/to/output_folder
 python3 run_one.py data/recordings/08__录制_08_201802_03
 ```
 
 | Argument | Required | Meaning |
 |---|---|---|
-| `data_folder` | yes | folder containing `dog_keypoints.csv` and `fence_corners.csv` (and optionally `human_keypoints.csv`) |
-| `--out DIR` | no | output folder; default `results/single/<folder name>/` (created if missing) |
+| `--dog FILE` | file mode | dog keypoints CSV |
+| `--fence FILE` | file mode | fence corners CSV (exactly 6 corners) |
+| `--human FILE` | no | human keypoints CSV; omitting it (or an empty file) = "no human present" |
+| `--rec NAME` | no | recording name for outputs/metadata; default = dog-CSV file stem, or its parent folder name for generic names like `dog_keypoints.csv` |
+| `data_folder` | folder mode | folder containing `dog_keypoints.csv` and `fence_corners.csv` (and optionally `human_keypoints.csv`) |
+| `--out DIR` | no | output folder; default `results/single/<name>/` (created if missing) |
 | `--win START END` | no | analysis time window in **frame numbers**, inclusive |
 
 Behaviour details:

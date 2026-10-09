@@ -1,29 +1,41 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""run_one.py — Analyse ONE experiment from its own data folder.
+"""run_one.py — Analyse ONE experiment.
 
-The data folder must contain (column schemas in README.md):
-    dog_keypoints.csv      dog keypoints per frame (required)
-    human_keypoints.csv    human keypoints per frame (optional; a missing or
-                           empty file is treated as "no human present")
-    fence_corners.csv      6 annotated hexagonal fence corners (required)
+Two input modes:
 
-Usage:
-    python3 run_one.py /abs/path/to/experiment_folder
-    python3 run_one.py /abs/path/to/experiment_folder --out /abs/path/to/out_folder
-    python3 run_one.py /abs/path/to/exp --win 120 1704   # manual time window (frames)
+A) File mode — give the keypoint CSVs directly (any absolute paths):
+    python3 run_one.py --dog dog.csv --fence fence.csv --out /path/out_dir
+    python3 run_one.py --dog dog.csv --fence fence.csv --human human.csv \
+        --out /path/out_dir --win 120 1704 --rec my_experiment
 
-Outputs (into the out folder; default results/single/<folder name>/):
+B) Folder mode — a folder holding the package layout
+   (dog_keypoints.csv / human_keypoints.csv / fence_corners.csv):
+    python3 run_one.py /path/to/experiment_folder [--out /path/out_dir]
+    python3 run_one.py data/recordings/08__录制_08_201802_03
+
+Column schemas are documented in README.md (pixel coordinates refer to the
+1280x720 colour frames; dog = occipital_protuberance / withers / tail_base /
+tail_tip; human = left_shoulder / right_shoulder / left_toe_tip /
+right_toe_tip; fence = corner_id 1-6 + color_x_720 / color_y_720).
+
+Outputs (into the out folder; default results/single/<name>/):
     metrics_frame.csv    frame-level metrics
     metrics_rec.csv      per-recording summary (1 row)
     timeseries.png       8-panel overview (paper Fig. 2 style)
     trajectory.png       trajectory + fence hexagon
 Key summary metrics are also printed to the console.
 
-Metadata (batch/rec/cond/breed/dog_id) is inferred from the folder name; the
-analysis time window defaults to the full recording. If the folder happens to
-be one of the package's own recordings (data/recordings/...), its metadata and
-time window are taken from the package index so results match run.py exactly.
+Notes:
+- `--human` is optional: omitting it (or an empty file) means "no human
+  present" and all human-related metrics become NaN.
+- `--fence` must contain exactly 6 corners (scale calibration).
+- Recording name: `--rec` if given; otherwise the dog-CSV stem, or the parent
+  folder name when the stem is a generic name like "dog_keypoints". If the
+  name matches one of the package's own recordings, its metadata and time
+  window are inherited from the package index so results match run.py.
+- Analysis time window: `--win START END` (frames) > package index > full
+  recording.
 """
 
 import argparse
@@ -41,11 +53,36 @@ import run as R  # noqa: E402  (reuses all metric/figure functions)
 COND_S = {"01": "S1", "02": "S2", "03": "S3"}
 
 
-def infer_meta(exp_dir):
-    """Metadata for an arbitrary experiment folder: inferred from the folder
-    name, or inherited from the package index when the folder is one of the
-    package's own recordings (keeps results identical to run.py)."""
-    name = os.path.basename(os.path.normpath(exp_dir))
+def load_from_files(dog_csv, human_csv=None):
+    """dog + human CSV files -> single long table (same as run.load_recording)."""
+    dog = pd.read_csv(dog_csv)
+    dog["subject"] = "dog"
+    if human_csv:
+        if not os.path.exists(human_csv):
+            raise SystemExit(f"Human keypoints file not found: {human_csv}")
+        hum = pd.read_csv(human_csv)
+    else:
+        hum = pd.DataFrame(columns=dog.columns)
+    hum["subject"] = "human"
+    return pd.concat([dog, hum], ignore_index=True)
+
+
+def load_fence_file(fence_csv):
+    """fence corners CSV -> (points, m/px scale); identical to run.load_fence."""
+    fc = pd.read_csv(fence_csv).sort_values("corner_id")
+    pts = fc[["color_x_720", "color_y_720"]].to_numpy(float)
+    if len(pts) == 6:
+        sides = np.linalg.norm(np.roll(pts, -1, axis=0) - pts, axis=1)
+        scale = R.FENCE_SIDE_M / float(sides.mean())
+    else:
+        scale = np.nan
+    return pts, scale
+
+
+def infer_meta(name):
+    """Metadata for an arbitrary experiment name: inferred from the name, or
+    inherited from the package index when it matches one of the package's own
+    recordings (keeps results identical to run.py)."""
     meta = {"batch": name, "rec": name, "dir": name, "cond": "",
             "scenario": "", "breed": "", "dog_id": name,
             "win_start": np.nan, "win_end": np.nan}
@@ -62,34 +99,82 @@ def infer_meta(exp_dir):
     if tail in COND_S:
         meta["cond"] = tail
         meta["scenario"] = COND_S[tail]
-    return meta, "folder name (full-recording analysis)"
+    return meta, "inferred from name (full-recording analysis)"
 
 
 def main():
     ap = argparse.ArgumentParser(
-        description="Analyse one experiment from its own data folder")
-    ap.add_argument("data_folder",
-                    help="folder containing dog_keypoints.csv, "
+        description="Analyse one experiment from keypoint CSVs "
+                    "(file mode or package-folder mode)")
+    ap.add_argument("data_folder", nargs="?", default=None,
+                    help="folder mode: folder containing dog_keypoints.csv, "
                          "human_keypoints.csv (optional) and fence_corners.csv")
+    ap.add_argument("--dog", help="file mode: dog keypoints CSV file")
+    ap.add_argument("--human", default=None,
+                    help="file mode: human keypoints CSV file "
+                         "(optional; omit = no human present)")
+    ap.add_argument("--fence", help="file mode: fence corners CSV file (6 corners)")
+    ap.add_argument("--rec", default=None,
+                    help="recording name used for outputs/metadata "
+                         "(default: dog-CSV stem, or its parent folder name "
+                         "for generic names like dog_keypoints.csv)")
     ap.add_argument("--out", default=None,
-                    help="output folder (default: results/single/<folder name>)")
+                    help="output folder (default: results/single/<name>)")
     ap.add_argument("--win", nargs=2, type=int, metavar=("START", "END"),
                     default=None,
                     help="analysis time window in frames (default: full recording)")
     args = ap.parse_args()
 
-    exp_dir = os.path.abspath(args.data_folder)
-    if not os.path.isdir(exp_dir):
-        raise SystemExit(f"Not a folder: {exp_dir}")
-    for f in ["dog_keypoints.csv", "fence_corners.csv"]:
-        if not os.path.exists(os.path.join(exp_dir, f)):
-            raise SystemExit(f"Missing required file: {os.path.join(exp_dir, f)}")
+    file_mode = args.dog is not None or args.human is not None or args.fence is not None
+    if file_mode and args.data_folder:
+        raise SystemExit("Give either a data folder OR --dog/--human/--fence "
+                         "files, not both.")
 
-    meta, meta_src = infer_meta(exp_dir)
-    print("=" * 78)
-    print(f"Single-experiment analysis: {exp_dir}")
+    if file_mode:
+        # ---------- file mode ----------
+        if not args.dog:
+            raise SystemExit("--dog is required in file mode.")
+        if not args.fence:
+            raise SystemExit("--fence is required in file mode "
+                             "(6 fence corners are needed for scale calibration).")
+        for f in (args.dog, args.fence):
+            if not os.path.isfile(f):
+                raise SystemExit(f"File not found: {f}")
+        stem = os.path.splitext(os.path.basename(args.dog))[0]
+        parent = os.path.basename(os.path.dirname(os.path.abspath(args.dog)))
+        default_name = parent if stem in ("dog_keypoints", "dog") else stem
+        name = args.rec or default_name
+        print("=" * 78)
+        print(f"Single-experiment analysis (file mode), recording name: {name}")
+        print(f"Input (dog)   : {os.path.abspath(args.dog)}")
+        print(f"Input (human) : {os.path.abspath(args.human) if args.human else '(none — no human)'}")
+        print(f"Input (fence) : {os.path.abspath(args.fence)}")
+        g = load_from_files(args.dog, args.human)
+        fence_px, scale = load_fence_file(args.fence)
+    else:
+        # ---------- folder mode ----------
+        if not args.data_folder:
+            ap.error("give a data folder, or --dog/--fence CSV files "
+                     "(see --help)")
+        exp_dir = os.path.abspath(args.data_folder)
+        if not os.path.isdir(exp_dir):
+            raise SystemExit(f"Not a folder: {exp_dir}")
+        for f in ["dog_keypoints.csv", "fence_corners.csv"]:
+            if not os.path.exists(os.path.join(exp_dir, f)):
+                raise SystemExit(f"Missing required file: {os.path.join(exp_dir, f)}")
+        name = os.path.basename(os.path.normpath(exp_dir))
+        print("=" * 78)
+        print(f"Single-experiment analysis (folder mode): {exp_dir}")
+        g = R.load_recording(exp_dir)
+        fence_px, scale = R.load_fence(exp_dir)
+
+    meta, meta_src = infer_meta(name)
     print(f"  metadata from: {meta_src}"
           + (f", scenario {meta['scenario']}" if meta["scenario"] else ""))
+
+    if fence_px is None or len(fence_px) != 6 or not np.isfinite(scale):
+        raise SystemExit("fence_corners.csv must contain exactly 6 corners "
+                         "(scale calibration needs the full hexagon)")
 
     # ---- time window: --win > package index > full recording ----
     if args.win is not None:
@@ -101,13 +186,7 @@ def main():
         w = None
         print("  time window: full recording (annotate none)")
 
-    # ---- load + fence scale ----
-    g = R.load_recording(exp_dir)
     g["batch"], g["rec"] = meta["batch"], meta["rec"]
-    fence_px, scale = R.load_fence(exp_dir)
-    if fence_px is None or len(fence_px) != 6 or not np.isfinite(scale):
-        raise SystemExit("fence_corners.csv must contain exactly 6 corners "
-                         "(scale calibration needs the full hexagon)")
 
     out_dir = (os.path.abspath(args.out) if args.out
                else os.path.join(HERE, "results", "single", meta["dir"]))
