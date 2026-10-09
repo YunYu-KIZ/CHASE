@@ -67,7 +67,7 @@ python3 run_one.py data/recordings/08__录制_08_201802_03
 | Argument | Required | Meaning |
 |---|---|---|
 | `--dog FILE` | file mode | dog keypoints CSV |
-| `--fence FILE` | file mode | fence corners CSV (exactly 6 corners) |
+| `--fence FILE` | no | fence corners CSV (exactly 6 corners). Optional: without it the scale cannot be calibrated and all metre-based metrics become NaN; pixel trajectories and figures are still produced |
 | `--human FILE` | no | human keypoints CSV; omitting it (or an empty file) = "no human present" |
 | `--rec NAME` | no | recording name for outputs/metadata; default = dog-CSV file stem, or its parent folder name for generic names like `dog_keypoints.csv` |
 | `data_folder` | folder mode | folder containing `dog_keypoints.csv` and `fence_corners.csv` (and optionally `human_keypoints.csv`) |
@@ -76,10 +76,11 @@ python3 run_one.py data/recordings/08__录制_08_201802_03
 
 Behaviour details:
 
-- **Required files** — `dog_keypoints.csv` and `fence_corners.csv` must
-  exist; `fence_corners.csv` must contain exactly 6 corners (the scale
-  calibration needs the full hexagon), otherwise the script exits with an
-  explicit error. `human_keypoints.csv` is optional: a missing or empty file
+- **Required files** — `dog_keypoints.csv` must exist. `fence_corners.csv` /
+  `--fence` is optional: a missing fence disables scale calibration (all
+  metre-based metrics NaN, pixel trajectories and figures still produced);
+  a fence file that is provided but does not contain exactly 6 corners is an
+  error. `human_keypoints.csv` is optional: a missing or empty file
   is treated as "no human present" and all human-related metrics become NaN.
 - **Metadata inference** — recording name = folder name; scenario is inferred
   when the folder name ends in `_01/_02/_03` (S1/S2/S3); otherwise it is

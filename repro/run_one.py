@@ -29,7 +29,10 @@ Key summary metrics are also printed to the console.
 Notes:
 - `--human` is optional: omitting it (or an empty file) means "no human
   present" and all human-related metrics become NaN.
-- `--fence` must contain exactly 6 corners (scale calibration).
+- `--fence` is optional: without it (or a fence_corners.csv in folder mode)
+  the metre-per-pixel scale cannot be calibrated, so all metre-based metrics
+  become NaN; pixel trajectories and figures are still produced. A provided
+  fence file must contain exactly 6 corners.
 - Recording name: `--rec` if given; otherwise the dog-CSV stem, or the parent
   folder name when the stem is a generic name like "dog_keypoints". If the
   name matches one of the package's own recordings, its metadata and time
@@ -113,7 +116,10 @@ def main():
     ap.add_argument("--human", default=None,
                     help="file mode: human keypoints CSV file "
                          "(optional; omit = no human present)")
-    ap.add_argument("--fence", help="file mode: fence corners CSV file (6 corners)")
+    ap.add_argument("--fence",
+                    help="file mode: fence corners CSV file (6 corners). "
+                         "Optional; without it the scale cannot be calibrated "
+                         "and all metre-based metrics will be NaN")
     ap.add_argument("--rec", default=None,
                     help="recording name used for outputs/metadata "
                          "(default: dog-CSV stem, or its parent folder name "
@@ -134,12 +140,10 @@ def main():
         # ---------- file mode ----------
         if not args.dog:
             raise SystemExit("--dog is required in file mode.")
-        if not args.fence:
-            raise SystemExit("--fence is required in file mode "
-                             "(6 fence corners are needed for scale calibration).")
-        for f in (args.dog, args.fence):
-            if not os.path.isfile(f):
-                raise SystemExit(f"File not found: {f}")
+        if not os.path.isfile(args.dog):
+            raise SystemExit(f"File not found: {args.dog}")
+        if args.fence and not os.path.isfile(args.fence):
+            raise SystemExit(f"File not found: {args.fence}")
         stem = os.path.splitext(os.path.basename(args.dog))[0]
         parent = os.path.basename(os.path.dirname(os.path.abspath(args.dog)))
         default_name = parent if stem in ("dog_keypoints", "dog") else stem
@@ -148,9 +152,14 @@ def main():
         print(f"Single-experiment analysis (file mode), recording name: {name}")
         print(f"Input (dog)   : {os.path.abspath(args.dog)}")
         print(f"Input (human) : {os.path.abspath(args.human) if args.human else '(none — no human)'}")
-        print(f"Input (fence) : {os.path.abspath(args.fence)}")
+        print(f"Input (fence) : {os.path.abspath(args.fence) if args.fence else '(none — no fence)'}")
         g = load_from_files(args.dog, args.human)
-        fence_px, scale = load_fence_file(args.fence)
+        if args.fence:
+            fence_px, scale = load_fence_file(args.fence)
+        else:
+            fence_px, scale = None, np.nan
+            print("  WARNING: no --fence given -> scale cannot be calibrated; "
+                  "all metre-based metrics will be NaN")
     else:
         # ---------- folder mode ----------
         if not args.data_folder:
@@ -159,22 +168,28 @@ def main():
         exp_dir = os.path.abspath(args.data_folder)
         if not os.path.isdir(exp_dir):
             raise SystemExit(f"Not a folder: {exp_dir}")
-        for f in ["dog_keypoints.csv", "fence_corners.csv"]:
-            if not os.path.exists(os.path.join(exp_dir, f)):
-                raise SystemExit(f"Missing required file: {os.path.join(exp_dir, f)}")
+        if not os.path.exists(os.path.join(exp_dir, "dog_keypoints.csv")):
+            raise SystemExit(f"Missing required file: "
+                             f"{os.path.join(exp_dir, 'dog_keypoints.csv')}")
         name = os.path.basename(os.path.normpath(exp_dir))
         print("=" * 78)
         print(f"Single-experiment analysis (folder mode): {exp_dir}")
         g = R.load_recording(exp_dir)
-        fence_px, scale = R.load_fence(exp_dir)
+        if os.path.exists(os.path.join(exp_dir, "fence_corners.csv")):
+            fence_px, scale = R.load_fence(exp_dir)
+        else:
+            fence_px, scale = None, np.nan
+            print("  WARNING: no fence_corners.csv -> scale cannot be "
+                  "calibrated; all metre-based metrics will be NaN")
+
+    # a provided fence must be a valid hexagon (a missing fence is allowed)
+    if fence_px is not None and (len(fence_px) != 6 or not np.isfinite(scale)):
+        raise SystemExit("fence corners file must contain exactly 6 corners "
+                         "(scale calibration needs the full hexagon)")
 
     meta, meta_src = infer_meta(name)
     print(f"  metadata from: {meta_src}"
           + (f", scenario {meta['scenario']}" if meta["scenario"] else ""))
-
-    if fence_px is None or len(fence_px) != 6 or not np.isfinite(scale):
-        raise SystemExit("fence_corners.csv must contain exactly 6 corners "
-                         "(scale calibration needs the full hexagon)")
 
     # ---- time window: --win > package index > full recording ----
     if args.win is not None:
@@ -218,10 +233,12 @@ def main():
 
     # ---- console summary ----
     print("-" * 78)
+    scale_txt = (f"{scale*1000:.2f} mm/px" if np.isfinite(scale)
+                 else "N/A (no fence)")
     print(f"  Frames = {rec_row['n_frames']} ({rec_row['duration_s']:.0f} s), "
           f"dog valid = {rec_row['dog_valid_ratio']:.0%}, "
           f"tail visible = {rec_row['tail_vis_ratio']:.0%}, "
-          f"scale = {scale*1000:.2f} mm/px")
+          f"scale = {scale_txt}")
     m = rec_row
     for k, lab in [
         ("dog_mean_speed_mps", "Dog mean speed (m/s)"),
